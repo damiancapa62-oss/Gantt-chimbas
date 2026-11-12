@@ -561,6 +561,11 @@
   .list-table .status-chip{
     display:inline-block; font-size:10px; font-weight:700; padding:2px 8px; border-radius:10px; color:#fff;
   }
+  .list-table td.list-comments{max-width:320px; font-size:12px; color:var(--ink-soft);}
+  .list-table td.list-comments .cmt-count{display:inline-block; margin-right:6px; font-size:11px; color:var(--accent-dark); font-weight:700; white-space:nowrap;}
+  .list-table td.list-comments .cmt-text{display:inline; overflow:hidden; display:-webkit-inline-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; vertical-align:top; max-width:270px;}
+  .list-table td.list-comments.empty{color:var(--ink-faint); opacity:0; transition:opacity .12s;}
+  .list-table tr.list-row:hover td.list-comments.empty{opacity:1;}
   .list-table .name-cell{display:flex; align-items:center; gap:6px; max-width:340px;}
   .list-table .section-tag{
     display:inline-block; font-size:10px; font-weight:700; padding:2px 7px; border-radius:5px; color:#fff; white-space:nowrap;
@@ -2899,24 +2904,25 @@
     wrap.scrollTop = savedScroll;
   }
 
-  function renderListView(){
-    const listWrapEl = document.getElementById('listWrap');
-    const savedScroll = listWrapEl.scrollTop;
-    const table = document.getElementById('listTable');
-    const cols = [
-      {key:'name', label:'Tarea'}, {key:'section', label:'Sección'}, {key:'assignee', label:'Responsable'},
-      {key:'priority', label:'Prioridad'}, {key:'start', label:'Inicio'}, {key:'end', label:'Fin'},
-      {key:'pct', label:'%'}, {key:'status', label:'Estado'}
-    ];
+  // Filas de la vista Lista (con búsqueda, filtros y orden aplicados). La usa también el Excel.
+  function itemCommentsList(item){
+    const out = [];
+    if(item.notes && item.notes.trim()) out.push({ kind:'note', text:item.notes.trim() });
+    (item.comments||[]).forEach(cm=> out.push({ kind:'comment', author:cm.author||'Anónimo', at:cm.at||null, text:cm.text||'' }));
+    return out;
+  }
+  function computeListRows(){
     let rows = [];
     data.sections.forEach(sec=>{
       sec.tasks.forEach(t=>{
         const r = taskRangeAndStatus(t);
         rows.push({id:t.id, item:t, name:t.name, section:sec.name, sectionColor:sec.color, assignee:t.assignee||'', priority:t.priority||'none',
-          start:t.start||'', end:t.end||'', pct:r.pct, status:r.status, isSub:false});
+          start:t.start||'', end:t.end||'', pct:r.pct, status:r.status, isSub:false,
+          rangeStart:r.start, rangeEnd:r.end, comments:itemCommentsList(t)});
         (t.subtasks||[]).forEach(s=>{
           rows.push({id:s.id, item:s, name:s.name, section:sec.name, sectionColor:sec.color, assignee:s.assignee||'', priority:s.priority||'none',
-            start:s.start||'', end:s.end||'', pct:s.completed?100:(s.progress||0), status:leafStatus(s), isSub:true});
+            start:s.start||'', end:s.end||'', pct:s.completed?100:(s.progress||0), status:leafStatus(s), isSub:true,
+            rangeStart:s.start?parseISO(s.start):null, rangeEnd:s.end?parseISO(s.end):null, comments:itemCommentsList(s)});
         });
       });
     });
@@ -2928,11 +2934,32 @@
         if(av<bv) return -1*sortDir; if(av>bv) return 1*sortDir; return 0;
       });
     }
+    return rows;
+  }
+  function listFiltersActive(){
+    const parts = [];
+    if(searchText && searchText.trim()) parts.push('búsqueda "' + searchText.trim() + '"');
+    if(assigneeFilter) parts.push('responsable: ' + assigneeFilter);
+    if(priorityFilter) parts.push('prioridad: ' + prio(priorityFilter).label);
+    return parts;
+  }
+
+  function renderListView(){
+    const listWrapEl = document.getElementById('listWrap');
+    const savedScroll = listWrapEl.scrollTop;
+    const table = document.getElementById('listTable');
+    const cols = [
+      {key:'name', label:'Tarea'}, {key:'section', label:'Sección'}, {key:'assignee', label:'Responsable'},
+      {key:'priority', label:'Prioridad'}, {key:'start', label:'Inicio'}, {key:'end', label:'Fin'},
+      {key:'pct', label:'%'}, {key:'status', label:'Estado'}
+    ];
+    const rows = computeListRows();
     const statusLabels = {done:'Completada', overdue:'Vencida', soon:'Vence pronto', upcoming:'Próxima', active:'En curso', 'no-date':'Sin fecha'};
     const statusColors = {done:'var(--done)', overdue:'var(--overdue)', soon:'#E0952E', upcoming:'var(--upcoming)', active:'var(--active-status)', 'no-date':'#B0932E'};
     const customCols = data.customColumns || [];
 
     let html = '<thead><tr>' + cols.map(c=>'<th data-col="'+c.key+'" class="'+(sortCol===c.key?'sorted':'')+'">'+escapeHtml(c.label)+(sortCol===c.key?(sortDir===1?' ▲':' ▼'):'')+'</th>').join('')
+      + '<th>Comentarios</th>'
       + customCols.map(c=>'<th>'+escapeHtml(c.name)+'</th>').join('') + '</tr></thead><tbody>';
     rows.forEach(r=>{
       html += '<tr class="list-row '+(r.isSub?'list-sub':'')+'" data-id="'+r.id+'">';
@@ -2944,6 +2971,15 @@
       html += '<td>'+(r.end?fmtShort(parseISO(r.end)):'—')+'</td>';
       html += '<td><span class="progress-mini"><span class="progress-mini-fill" style="width:'+r.pct+'%"></span></span>'+r.pct+'%</td>';
       html += '<td><span class="status-chip" style="background:'+(statusColors[r.status]||'#999')+'">'+(statusLabels[r.status]||r.status)+'</span></td>';
+      if(r.comments.length){
+        const last = r.comments[r.comments.length-1];
+        const full = r.comments.map(c=> c.kind==='note' ? 'Nota: '+c.text : (c.author+': '+c.text)).join('\n');
+        html += '<td class="list-comments" title="'+escapeHtml(full)+'">'
+          + (r.comments.length > 1 ? '<span class="cmt-count">💬 '+r.comments.length+'</span>' : '<span class="cmt-count">💬</span>')
+          + '<span class="cmt-text">'+(last.kind==='comment' ? '<b>'+escapeHtml(last.author)+':</b> ' : '<b>Nota:</b> ')+escapeHtml(last.text)+'</span></td>';
+      } else {
+        html += '<td class="list-comments empty" title="Tocá la fila para agregar un comentario">＋ comentar</td>';
+      }
       customCols.forEach(c=>{ html += '<td data-custom-cell data-item-id="'+r.id+'" data-col-id="'+c.id+'"></td>'; });
       html += '</tr>';
     });
@@ -3749,7 +3785,7 @@
     const nums = computeNumbering();
     const summary = computeProjectSummary();
     const cols = data.customColumns || [];
-    const generated = new Date().toLocaleString('es-AR');
+    const generated = new Date().toLocaleString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false });
 
     // ===================== Hoja 1: Lista de tareas (mismo estilo que la vista "Lista") =====================
     const ws = wb.addWorksheet('Lista de tareas', {
@@ -3785,7 +3821,8 @@
     kp.alignment = { horizontal:'right', vertical:'middle' };
     ws.mergeCells(3, C.st - 1, 3, lastCol);
     const kp2 = ws.getCell(3, C.st - 1);
-    kp2.value = summary.overdue + ' vencidas · ' + summary.noDate + ' sin fecha · generado ' + generated;
+    const filt = listFiltersActive();
+    kp2.value = (filt.length ? 'Filtrado por ' + filt.join(', ') + ' · ' : '') + summary.overdue + ' vencidas · ' + summary.noDate + ' sin fecha · generado ' + generated;
     kp2.font = { name:FONT, size:10, bold:true, color:{ argb:'FFB8BDCB' } };
     kp2.alignment = { horizontal:'right', vertical:'middle' };
     ws.getRow(5).height = 10;
@@ -3805,15 +3842,13 @@
 
     const toDate = (d)=> d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : null;
     const isoToDate = (s)=> s ? parseISO(s) : null;
-    function commentsText(item){
-      const parts = [];
-      if(item.notes && item.notes.trim()) parts.push('📝 ' + item.notes.trim());
-      (item.comments||[]).forEach(cm=>{
-        const d = cm.at ? new Date(cm.at) : null;
-        const when = d && !isNaN(d) ? d.toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
-        parts.push((when ? when + ' · ' : '') + (cm.author || 'Anónimo') + ': ' + (cm.text || ''));
-      });
-      return parts.join('\n');
+    function commentsText(list){
+      return (list||[]).map(c=>{
+        if(c.kind === 'note') return 'Nota: ' + c.text;
+        const d = c.at ? new Date(c.at) : null;
+        const when = d && !isNaN(d) ? d.toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) + ' · ' : '';
+        return when + c.author + ': ' + c.text;
+      }).join('\n');
     }
     function customVals(item){
       return cols.map(c=>{
@@ -3861,27 +3896,26 @@
       const lines = o.comments ? o.comments.split('\n').reduce((a,l)=> a + Math.max(1, Math.ceil(l.length / 70)), 0) : 1;
       const nameLines = Math.max(1, Math.ceil(String(o.name||'').length / 55));
       row.height = Math.max(22, 14 * Math.max(lines, nameLines) + 8);
-      if(o.isSub) row.outlineLevel = 1;
     }
 
+    // mismas filas, filtros y orden que la vista Lista
+    const listRows = computeListRows();
+    const secColor = {}; data.sections.forEach(sc=>{ secColor[sc.name] = sc.color; });
     let r = HEAD_ROW + 1;
-    data.sections.forEach(sec=>{
-      sec.tasks.forEach(t=>{
-        const rr = taskRangeAndStatus(t);
-        writeRow(r++, { num:nums[t.id], name:t.name, section:sec.name, color:sec.color, assignee:t.assignee, priority:t.priority,
-          start:toDate(rr.start), end:toDate(rr.end), pct:(rr.pct||0)/100, status:rr.status, comments:commentsText(t), custom:customVals(t), isSub:false });
-        (t.subtasks||[]).forEach(s=>{
-          writeRow(r++, { num:nums[s.id], name:s.name, section:sec.name, color:sec.color, assignee:s.assignee, priority:s.priority,
-            start:isoToDate(s.start), end:isoToDate(s.end), pct:(s.completed ? 100 : (s.progress||0))/100, status:leafStatus(s),
-            comments:commentsText(s), custom:customVals(s), isSub:true });
-        });
-      });
+    listRows.forEach(lr=>{
+      writeRow(r++, { num:nums[lr.id], name:lr.name, section:lr.section, color:lr.sectionColor || secColor[lr.section], assignee:lr.assignee,
+        priority:lr.priority, start:toDate(lr.rangeStart), end:toDate(lr.rangeEnd), pct:(lr.pct||0)/100, status:lr.status,
+        comments:commentsText(lr.comments), custom:customVals(lr.item), isSub:lr.isSub });
     });
+    if(!listRows.length){
+      ws.getCell(r, C.name).value = 'No hay tareas que coincidan con los filtros actuales.';
+      ws.getCell(r, C.name).font = { name:FONT, italic:true, color:{ argb: SOFT } };
+      r++;
+    }
 
-    ws.views = [{ state:'frozen', xSplit:2, ySplit:HEAD_ROW, topLeftCell:'C7', activeCell:'A7', showGridLines:false }];
+    ws.views = [{ state:'frozen', xSplit:2, ySplit:HEAD_ROW, topLeftCell:'C7', activeCell:'C7', showGridLines:false }];
     ws.autoFilter = { from:{ row:HEAD_ROW, column:1 }, to:{ row:Math.max(HEAD_ROW, r-1), column:lastCol } };
     ws.pageSetup.printTitlesRow = HEAD_ROW + ':' + HEAD_ROW;
-    ws.properties.outlineProperties = { summaryBelow:false };
 
     function paintStatus(cell, status){
       const st = XL_STATUS[status] || XL_STATUS['no-date'];
@@ -4199,7 +4233,7 @@
       saveTimer = null;
       saveAttempts = 0;
       clearTimeout(saveRetryTimer);
-      syncMetaEl.textContent = 'Último guardado: ' + new Date().toLocaleTimeString('es-AR');
+      syncMetaEl.textContent = 'Último guardado: ' + new Date().toLocaleTimeString('es-AR', { hour12:false });
     }catch(err){
       console.error('[Gantt] Error guardando', err);
       saveAttempts++;
@@ -4230,7 +4264,7 @@
         data = seedData();
       }
     }
-    const when = cache && cache.savedAt ? ' (copia del ' + new Date(cache.savedAt).toLocaleString('es-AR') + ')' : '';
+    const when = cache && cache.savedAt ? ' (copia del ' + new Date(cache.savedAt).toLocaleString('es-AR', { hour12:false }) + ')' : '';
     const what = (cache && cache.data) ? 'Mostrando la última copia guardada en este navegador' + when + '. Podés seguir trabajando: los cambios se suben solos cuando vuelva la conexión.' : 'Se muestran los datos originales del proyecto (todavía no hay copia guardada en este navegador).';
     setStatus(SUPABASE_READY ? 'Sin conexión' : 'Sin configurar', 'err');
     showBanner('⚠️ Gantt sin conexión. ' + reasonMsg + ' ' + what);
@@ -4279,7 +4313,7 @@
       } else if(row && row.data){
         data = normalizeData(row.data);
         remoteReady = true;
-        syncMetaEl.textContent = row.updated_at ? ('Última sincronización: ' + new Date(row.updated_at).toLocaleString('es-AR')) : '';
+        syncMetaEl.textContent = row.updated_at ? ('Última sincronización: ' + new Date(row.updated_at).toLocaleString('es-AR', { hour12:false })) : '';
       } else {
         data = (cache && cache.data) ? normalizeData(cache.data) : seedData();
         remoteReady = true;
@@ -4360,7 +4394,7 @@
           data = normalizeData(incoming);
           render();
           applyingRemote = false;
-          if(payload.new.updated_at) syncMetaEl.textContent = 'Última sincronización: ' + new Date(payload.new.updated_at).toLocaleString('es-AR');
+          if(payload.new.updated_at) syncMetaEl.textContent = 'Última sincronización: ' + new Date(payload.new.updated_at).toLocaleString('es-AR', { hour12:false });
         }
       })
       .subscribe((status)=>{
