@@ -189,6 +189,9 @@
   }
   .btn:hover{background:var(--accent-dark);}
   .btn:active{transform:translateY(1px);}
+  .btn.excel-btn{background:#1D6F42; display:inline-flex; align-items:center; gap:6px;}
+  .btn.excel-btn:hover{background:#155A35;}
+  .btn.excel-btn:disabled{opacity:.7; cursor:progress;}
   .btn.secondary{background:var(--panel); color:var(--ink-soft); border:1px solid var(--line);}
   .btn.secondary.active{background:var(--accent); color:#fff; border-color:var(--accent-dark);}
   .btn.secondary:hover{border-color:var(--accent); color:var(--accent-dark); background:var(--accent-soft);}
@@ -801,6 +804,7 @@
       <button class="view-tab" id="tabDashboard"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="6.5" height="6.5" rx="1.2"/><rect x="11" y="2.5" width="6.5" height="4" rx="1.2"/><rect x="11" y="8" width="6.5" height="8.5" rx="1.2"/><rect x="2.5" y="10.5" width="6.5" height="6" rx="1.2"/></svg> Panel</button>
     </div>
     <button class="btn" id="addSectionBtn">+ Sección</button>
+    <button class="btn excel-btn" id="excelBtn" title="Descargar la lista completa del proyecto en Excel (.xlsx), con formato"><svg viewBox="0 0 20 20" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="2.5" width="14" height="15" rx="2"/><path d="M7 7l6 6M13 7l-6 6"/></svg> Descargar Excel</button>
     <div class="search-box"><span class="ico"><svg viewBox="0 0 20 20" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="8.5" cy="8.5" r="5.5"/><line x1="16" y1="16" x2="12.7" y2="12.7"/></svg></span><input id="searchInput" type="text" placeholder="Buscar tarea o responsable…"></div>
     <select class="assignee-select" id="assigneeFilter"><option value="">Todos los responsables</option></select>
     <select class="assignee-select" id="priorityFilter">
@@ -856,6 +860,7 @@
       <button class="tb-icon-btn" id="workloadBtn" title="Vista de equipo">👥 Vista de equipo</button>
       <div class="ov-sep"></div>
       <div class="ov-label">Datos</div>
+      <button class="tb-icon-btn" id="excelMenuBtn" title="Descargar Excel (.xlsx) con formato">📊 Descargar Excel (.xlsx)</button>
       <button class="tb-icon-btn" id="exportBtn" title="Exportar a CSV">⇩ Exportar a CSV</button>
       <button class="tb-icon-btn" id="columnsBtn" title="Columnas personalizadas">🏷️ Columnas personalizadas</button>
       <button class="btn secondary" id="fillDatesBtn" title="Busca en la base original del Excel las fechas de tareas/subtareas que hoy están en blanco y las completa, sin tocar nada de lo que ya cargaste">🔄 Completar fechas</button>
@@ -952,7 +957,14 @@
 </div>
 
 <!-- Supabase (base de datos gratuita fuera de Claude, para que el Gantt sea en vivo) -->
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Versión fija de la librería (antes "@2" agarraba siempre la última y podía romperse sola).
+     Si jsDelivr no responde, se intenta con unpkg como respaldo. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
+<script>
+  if(typeof window.supabase === 'undefined'){
+    document.write('<script src="https://unpkg.com/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"><\/script>');
+  }
+</script>
 
 <script>
 (function(){
@@ -3403,6 +3415,7 @@
       {label:'Camino crítico', icon:'🎯', run:()=> document.getElementById('criticalPathBtn').click()},
       {label:'Línea base', icon:'📌', run:()=> document.getElementById('baselineBtn').click()},
       {label:'Vista de equipo', icon:'👥', run:()=> document.getElementById('workloadBtn').click()},
+      {label:'Descargar Excel (.xlsx)', icon:'📊', run:()=> exportExcel()},
       {label:'Exportar a CSV', icon:'⇩', run:()=> document.getElementById('exportBtn').click()},
       {label:'Columnas personalizadas', icon:'🏷️', run:()=> document.getElementById('columnsBtn').click()},
       {label:'Imprimir / PDF', icon:'🖨️', run:()=> window.print()},
@@ -3534,6 +3547,8 @@
   document.getElementById('priorityFilter').addEventListener('change', (e)=>{ priorityFilter = e.target.value; render(); if(viewMode==='list') renderListView(); });
 
   document.getElementById('exportBtn').onclick = exportCSV;
+  document.getElementById('excelBtn').onclick = exportExcel;
+  document.getElementById('excelMenuBtn').onclick = exportExcel;
 
   // ---------- columnas personalizadas ----------
   function openColumnsModal(){
@@ -3673,6 +3688,327 @@
     if(viewMode === 'list') renderListView();
   };
 
+  // ---------- exportar a Excel (.xlsx) con formato ----------
+  const EXCELJS_URLS = [
+    'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js',
+    'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',
+    'https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js'
+  ];
+  const XL_STATUS = {
+    'done':    { label:'Completada',   fill:'E4F6EA', font:'187B43' },
+    'overdue': { label:'Vencida',      fill:'FCE9E9', font:'B22E2E' },
+    'soon':    { label:'Vence pronto', fill:'FFF1DC', font:'B45309' },
+    'active':  { label:'En curso',     fill:'E3EEFB', font:'1E5FA8' },
+    'upcoming':{ label:'Próxima',      fill:'EEF0F4', font:'4B5563' },
+    'no-date': { label:'Sin fecha',    fill:'FFFBEF', font:'8A6D1A' }
+  };
+  function xlHex(hex){ return 'FF' + String(hex||'#5B5FEF').replace('#','').toUpperCase().slice(0,6); }
+  function xlLighten(hex, f){
+    const h = String(hex||'#5B5FEF').replace('#','');
+    const c = [0,2,4].map(i=> parseInt(h.substr(i,2),16));
+    return 'FF' + c.map(v=> Math.round(v + (255 - v) * f).toString(16).padStart(2,'0')).join('').toUpperCase();
+  }
+  function xlFileName(){
+    const base = (data.title || 'Gantt').replace(/[^a-z0-9áéíóúñü]+/gi,'_').replace(/^_+|_+$/g,'');
+    return base + '_' + toISO(todayUTC()) + '.xlsx';
+  }
+
+  async function exportExcel(){
+    const btn = document.getElementById('excelBtn');
+    const prevHtml = btn.innerHTML;
+    btn.disabled = true; btn.textContent = 'Generando Excel…';
+    try{
+      const ok = await loadScriptWithFallbacks(EXCELJS_URLS, ()=> typeof window.ExcelJS !== 'undefined');
+      if(!ok){ alert('No se pudo descargar el generador de Excel (revisá tu conexión a internet). Mientras tanto podés usar "Exportar a CSV" desde el menú ☰.'); return; }
+      const wb = buildExcelWorkbook(window.ExcelJS);
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = xlFileName();
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(()=> URL.revokeObjectURL(url), 4000);
+      showToast('Excel descargado', '📊');
+    }catch(err){
+      console.error('[Gantt] Error generando Excel', err);
+      alert('No se pudo generar el Excel: ' + (err && err.message ? err.message : err));
+    }finally{
+      btn.disabled = false; btn.innerHTML = prevHtml;
+    }
+  }
+
+  function buildExcelWorkbook(ExcelJS){
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Gantt ' + (data.title || '');
+    wb.created = new Date();
+    const DARK = 'FF1B1F2E', ACCENT = 'FF4338CA', GRID = 'FFD9DCE3', INK = 'FF1A1D29', SOFT = 'FF5B6072';
+    const thin = { style:'thin', color:{ argb: GRID } };
+    const border = { top:thin, left:thin, bottom:thin, right:thin };
+    const nums = computeNumbering();
+    const summary = computeProjectSummary();
+    const cols = data.customColumns || [];
+    const generated = new Date().toLocaleString('es-AR');
+
+    // ===================== Hoja 1: Lista del proyecto =====================
+    const ws = wb.addWorksheet('Lista del proyecto', {
+      properties:{ tabColor:{ argb:'FF1D6F42' } },
+      pageSetup:{ paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0,
+                  margins:{ left:0.4, right:0.4, top:0.5, bottom:0.5, header:0.3, footer:0.3 } },
+      headerFooter:{ oddFooter:'&L' + (data.title||'') + '&RPágina &P de &N' }
+    });
+    const headers = ['N°','Sección','Tarea / Subtarea','Tipo','Responsable','Prioridad','Inicio','Fin','Días','% Avance','Estado','Notas']
+      .concat(cols.map(c=> c.name));
+    const widths  = [8, 18, 50, 11, 24, 13, 12, 12, 7, 10, 14, 40].concat(cols.map(()=> 18));
+    ws.columns = widths.map(w=> ({ width:w }));
+    const lastCol = headers.length;
+
+    // Encabezado del documento
+    ws.mergeCells(1,1,1,lastCol);
+    const t1 = ws.getCell(1,1);
+    t1.value = (data.title || 'Proyecto') + ' — Lista del proyecto';
+    t1.font = { name:'Calibri', size:18, bold:true, color:{ argb:'FFFFFFFF' } };
+    t1.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: DARK } };
+    t1.alignment = { vertical:'middle', indent:1 };
+    ws.getRow(1).height = 34;
+
+    ws.mergeCells(2,1,2,lastCol);
+    const t2 = ws.getCell(2,1);
+    const startTxt = data.projectStart ? fmtShort(parseISO(data.projectStart)) + '/' + data.projectStart.slice(0,4) : '—';
+    t2.value = [data.company, data.owner ? 'Responsable: ' + data.owner : '', 'Inicio del proyecto: ' + startTxt].filter(Boolean).join('   ·   ');
+    t2.font = { size:11, color:{ argb:'FFE5E7EB' } };
+    t2.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: DARK } };
+    t2.alignment = { vertical:'middle', indent:1 };
+    ws.getRow(2).height = 20;
+
+    ws.mergeCells(3,1,3,lastCol);
+    const t3 = ws.getCell(3,1);
+    t3.value = 'Avance general: ' + summary.pct + '% (' + summary.done + ' de ' + summary.total + ' completadas)   ·   Vencidas: ' + summary.overdue + '   ·   Sin fecha: ' + summary.noDate + '   ·   Generado: ' + generated;
+    t3.font = { size:10.5, bold:true, color:{ argb: ACCENT } };
+    t3.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFECEBFF' } };
+    t3.alignment = { vertical:'middle', indent:1 };
+    ws.getRow(3).height = 22;
+    ws.getRow(4).height = 8;
+
+    // Encabezados de la tabla
+    const HEAD_ROW = 5;
+    const hr = ws.getRow(HEAD_ROW);
+    headers.forEach((h,i)=>{
+      const c = hr.getCell(i+1);
+      c.value = h;
+      c.font = { bold:true, color:{ argb:'FFFFFFFF' }, size:10.5 };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: ACCENT } };
+      c.alignment = { vertical:'middle', horizontal: i===2||i===11||i===1||i===4 ? 'left' : 'center', wrapText:true, indent: i===2?1:0 };
+      c.border = border;
+    });
+    hr.height = 26;
+
+    const toDate = (d)=> d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : null;
+    const isoToDate = (s)=> s ? parseISO(s) : null;
+
+    function styleDataRow(row, opts){
+      for(let i=1;i<=lastCol;i++){
+        const c = row.getCell(i);
+        c.border = border;
+        c.alignment = Object.assign({ vertical:'middle', wrapText: (i===3||i===12) }, c.alignment || {});
+        if(opts.fill) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: opts.fill } };
+        c.font = Object.assign({ size:10.5, color:{ argb: INK } }, opts.font || {});
+      }
+      row.getCell(1).alignment = { vertical:'middle', horizontal:'left' };
+      [4,6,7,8,9,10,11].forEach(i=>{ row.getCell(i).alignment = { vertical:'middle', horizontal:'center' }; });
+      row.getCell(7).numFmt = 'dd/mm/yyyy';
+      row.getCell(8).numFmt = 'dd/mm/yyyy';
+      row.getCell(10).numFmt = '0%';
+    }
+    function paintStatus(cell, status){
+      const st = XL_STATUS[status] || XL_STATUS['no-date'];
+      cell.value = st.label;
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF' + st.fill } };
+      cell.font = { bold:true, size:10, color:{ argb:'FF' + st.font } };
+    }
+    function paintPriority(cell, p){
+      if(!p || p === 'none'){ cell.value = '—'; cell.font = { size:10, color:{ argb:'FFB0B6C0' } }; return; }
+      cell.value = prio(p).label;
+      cell.font = { bold:true, size:10, color:{ argb: xlHex(prio(p).color) } };
+    }
+    function customVals(item){
+      return cols.map(c=>{
+        const v = item.customValues ? item.customValues[c.id] : '';
+        if(v === undefined || v === null || v === '') return '';
+        return c.type === 'number' && !isNaN(Number(v)) ? Number(v) : String(v);
+      });
+    }
+
+    let r = HEAD_ROW + 1;
+    data.sections.forEach(sec=>{
+      // fila de sección
+      const secRow = ws.getRow(r);
+      const secLeaves = [];
+      sec.tasks.forEach(t=>{ if(t.subtasks && t.subtasks.length) secLeaves.push(...t.subtasks); else secLeaves.push(t); });
+      const dated = sec.tasks.map(taskRangeAndStatus).filter(x=> x.start && x.end);
+      const sMin = dated.length ? dated.map(x=>x.start).reduce((a,b)=> a<b?a:b) : null;
+      const sMax = dated.length ? dated.map(x=>x.end).reduce((a,b)=> a>b?a:b) : null;
+      secRow.values = [nums[sec.id], sec.name, (sec.name||'').toUpperCase(), 'Sección', '', '', toDate(sMin), toDate(sMax),
+        (sMin && sMax) ? diffDays(sMin, sMax) + 1 : '', sectionProgress(sec)/100, secLeaves.length + ' ítems', ''].concat(cols.map(()=>''));
+      styleDataRow(secRow, { fill: xlLighten(sec.color, 0.78), font:{ bold:true, size:11, color:{ argb: INK } } });
+      secRow.getCell(1).border = Object.assign({}, border, { left:{ style:'thick', color:{ argb: xlHex(sec.color) } } });
+      secRow.height = 22;
+      r++;
+
+      sec.tasks.forEach(t=>{
+        const rr = taskRangeAndStatus(t);
+        const hasSubs = !!(t.subtasks && t.subtasks.length);
+        const row = ws.getRow(r);
+        row.values = [nums[t.id], sec.name, t.name, t.type==='milestone' ? 'Hito' : 'Tarea', t.assignee || '', '', toDate(rr.start), toDate(rr.end),
+          (rr.start && rr.end) ? diffDays(rr.start, rr.end) + 1 : '', (rr.pct||0)/100, '', t.notes || ''].concat(customVals(t));
+        styleDataRow(row, { font:{ bold: hasSubs, size:10.5, color:{ argb: INK } } });
+        row.getCell(3).alignment = { vertical:'middle', wrapText:true, indent:1 };
+        paintPriority(row.getCell(6), t.priority);
+        paintStatus(row.getCell(11), rr.status);
+        r++;
+
+        (t.subtasks||[]).forEach(s=>{
+          const st = leafStatus(s);
+          const sd = isoToDate(s.start), ed = isoToDate(s.end);
+          const srow = ws.getRow(r);
+          srow.values = [nums[s.id], sec.name, s.name, s.type==='milestone' ? 'Hito' : 'Subtarea', s.assignee || '', '', sd, ed,
+            (sd && ed) ? diffDays(sd, ed) + 1 : '', (s.completed ? 100 : (s.progress||0))/100, '', s.notes || ''].concat(customVals(s));
+          styleDataRow(srow, { fill:'FFFAFAFC', font:{ size:10, color:{ argb: SOFT } } });
+          srow.getCell(3).alignment = { vertical:'middle', wrapText:true, indent:3 };
+          srow.getCell(3).font = { size:10, color:{ argb: INK } };
+          srow.getCell(1).font = { size:9.5, color:{ argb:'FF8B93A8' } };
+          paintPriority(srow.getCell(6), s.priority);
+          paintStatus(srow.getCell(11), st);
+          srow.outlineLevel = 1;
+          r++;
+        });
+      });
+    });
+
+    ws.views = [{ state:'frozen', xSplit:3, ySplit:HEAD_ROW, topLeftCell:'D6', activeCell:'A6', showGridLines:false }];
+    ws.autoFilter = { from:{ row:HEAD_ROW, column:1 }, to:{ row:Math.max(HEAD_ROW, r-1), column:lastCol } };
+    ws.pageSetup.printTitlesRow = HEAD_ROW + ':' + HEAD_ROW;
+    ws.properties.outlineProperties = { summaryBelow:false };
+
+    // ===================== Hoja 2: Resumen =====================
+    const rs = wb.addWorksheet('Resumen', {
+      properties:{ tabColor:{ argb: ACCENT } },
+      pageSetup:{ paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 }
+    });
+    rs.columns = [{width:34},{width:12},{width:14},{width:12},{width:12},{width:15},{width:13},{width:13}];
+    rs.views = [{ showGridLines:false }];
+    rs.mergeCells('A1:H1');
+    const r1 = rs.getCell('A1');
+    r1.value = (data.title || 'Proyecto') + ' — Resumen';
+    r1.font = { size:18, bold:true, color:{ argb:'FFFFFFFF' } };
+    r1.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: DARK } };
+    r1.alignment = { vertical:'middle', indent:1 };
+    rs.getRow(1).height = 34;
+    rs.mergeCells('A2:H2');
+    rs.getCell('A2').value = 'Generado: ' + generated;
+    rs.getCell('A2').font = { size:10, italic:true, color:{ argb: SOFT } };
+
+    // tarjetas de KPIs
+    const kpis = [
+      ['Avance general', summary.pct/100, '0%', ACCENT],
+      ['Completadas', summary.done, '0', 'FF187B43'],
+      ['Vencidas', summary.overdue, '0', 'FFB22E2E'],
+      ['Sin fecha', summary.noDate, '0', 'FF8A6D1A'],
+      ['Total de ítems', summary.total, '0', INK]
+    ];
+    const kRowL = rs.getRow(4), kRowV = rs.getRow(5);
+    kpis.forEach((k,i)=>{
+      const col = i === 0 ? 1 : i + 1;
+      const lc = kRowL.getCell(col), vc = kRowV.getCell(col);
+      lc.value = k[0]; lc.font = { size:9.5, bold:true, color:{ argb: SOFT } };
+      lc.alignment = { horizontal:'center' };
+      vc.value = k[1]; vc.numFmt = k[2]; vc.font = { size:20, bold:true, color:{ argb: k[3] } };
+      vc.alignment = { horizontal:'center', vertical:'middle' };
+      [lc, vc].forEach(c=>{ c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFF7F7FA' } }; c.border = border; });
+    });
+    kRowV.height = 34;
+
+    function tableHeader(rowNum, titles){
+      const row = rs.getRow(rowNum);
+      titles.forEach((h,i)=>{
+        const c = row.getCell(i+1);
+        c.value = h;
+        c.font = { bold:true, color:{ argb:'FFFFFFFF' } };
+        c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: ACCENT } };
+        c.alignment = { horizontal: i===0 ? 'left' : 'center', vertical:'middle', wrapText:true, indent: i===0?1:0 };
+        c.border = border;
+      });
+      row.height = 24;
+    }
+    function sectionTitle(rowNum, text){
+      const c = rs.getCell(rowNum, 1);
+      c.value = text;
+      c.font = { size:13, bold:true, color:{ argb: INK } };
+    }
+
+    // por sección
+    let y = 7;
+    sectionTitle(y, 'Avance por sección'); y++;
+    tableHeader(y, ['Sección','Ítems','Completadas','Vencidas','Sin fecha','% Avance','Inicio','Fin']); y++;
+    data.sections.forEach(sec=>{
+      const leaves = [];
+      sec.tasks.forEach(t=>{ if(t.subtasks && t.subtasks.length) leaves.push(...t.subtasks); else leaves.push(t); });
+      const stats = leaves.reduce((a,it)=>{ const st = leafStatus(it); a[st] = (a[st]||0)+1; return a; }, {});
+      const dated = sec.tasks.map(taskRangeAndStatus).filter(x=> x.start && x.end);
+      const sMin = dated.length ? dated.map(x=>x.start).reduce((a,b)=> a<b?a:b) : null;
+      const sMax = dated.length ? dated.map(x=>x.end).reduce((a,b)=> a>b?a:b) : null;
+      const row = rs.getRow(y);
+      row.values = [sec.name, leaves.length, stats['done']||0, stats['overdue']||0, stats['no-date']||0, sectionProgress(sec)/100, toDate(sMin), toDate(sMax)];
+      for(let i=1;i<=8;i++){ const c = row.getCell(i); c.border = border; c.alignment = { horizontal: i===1?'left':'center', vertical:'middle', indent: i===1?1:0 }; }
+      row.getCell(1).font = { bold:true };
+      row.getCell(1).fill = { type:'pattern', pattern:'solid', fgColor:{ argb: xlLighten(sec.color, 0.8) } };
+      row.getCell(1).border = Object.assign({}, border, { left:{ style:'thick', color:{ argb: xlHex(sec.color) } } });
+      row.getCell(4).font = { bold: !!stats['overdue'], color:{ argb: stats['overdue'] ? 'FFB22E2E' : INK } };
+      row.getCell(6).numFmt = '0%';
+      row.getCell(7).numFmt = 'dd/mm/yyyy';
+      row.getCell(8).numFmt = 'dd/mm/yyyy';
+      y++;
+    });
+
+    // por responsable
+    y += 2;
+    sectionTitle(y, 'Carga por responsable'); y++;
+    tableHeader(y, ['Responsable','Asignadas','Completadas','Vencidas','Pendientes','% Completado']); y++;
+    const people = {};
+    data.sections.forEach(sec=> sec.tasks.forEach(t=>{
+      const leaves = (t.subtasks && t.subtasks.length) ? t.subtasks : [t];
+      leaves.forEach(it=>{
+        const name = (it.assignee || '').trim() || 'Sin asignar';
+        const p = people[name] || (people[name] = { total:0, done:0, overdue:0 });
+        p.total++;
+        if(it.completed) p.done++;
+        else if(leafStatus(it) === 'overdue') p.overdue++;
+      });
+    }));
+    Object.keys(people).sort((a,b)=> (a==='Sin asignar') - (b==='Sin asignar') || people[b].total - people[a].total || a.localeCompare(b)).forEach(name=>{
+      const p = people[name];
+      const row = rs.getRow(y);
+      row.values = [name, p.total, p.done, p.overdue, p.total - p.done, p.total ? p.done/p.total : 0];
+      for(let i=1;i<=6;i++){ const c = row.getCell(i); c.border = border; c.alignment = { horizontal: i===1?'left':'center', vertical:'middle', indent: i===1?1:0 }; }
+      if(name === 'Sin asignar') row.getCell(1).font = { italic:true, color:{ argb: SOFT } };
+      row.getCell(4).font = { bold: !!p.overdue, color:{ argb: p.overdue ? 'FFB22E2E' : INK } };
+      row.getCell(6).numFmt = '0%';
+      y++;
+    });
+
+    // leyenda de estados
+    y += 2;
+    sectionTitle(y, 'Referencia de estados'); y++;
+    Object.keys(XL_STATUS).forEach(k=>{
+      const c = rs.getCell(y, 1);
+      paintStatus(c, k);
+      c.border = border;
+      c.alignment = { indent:1 };
+      y++;
+    });
+
+    return wb;
+  }
+
   function exportCSV(){
     const rows = [['Sección','Tarea','Subtarea','Tipo','Asignado','Inicio','Fin','% Completado','Estado']];
     data.sections.forEach(sec=>{
@@ -3722,22 +4058,104 @@
   let sb = null;
   let channel = null;
   let applyingRemote = false;
+  // remoteReady = true solo después de leer bien los datos de Supabase. Mientras sea false
+  // NUNCA se sube nada a la nube: así, si la conexión falla, no se pisan los datos reales
+  // con los datos de ejemplo ni con una copia vieja.
+  let remoteReady = false;
+  let offlineDirty = false;   // hay cambios hechos sin conexión que todavía no se subieron
+  let loadingNow = false;
+  let reconnectTimer = null;
+  let reconnectDelay = 15000;
+  let firstLoadDone = false;
+  const CACHE_KEY = 'gantt-cache-' + ROW_ID;
+  const SUPABASE_LIB_FALLBACKS = [
+    'https://unpkg.com/@supabase/supabase-js@2.118.0/dist/umd/supabase.js',
+    'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js'
+  ];
 
   console.log('[Gantt] SUPABASE_READY =', SUPABASE_READY, '| url =', SUPABASE_CONFIG.url);
 
-  if(SUPABASE_READY){
+  function loadScriptOnce(src){
+    return new Promise((resolve, reject)=>{
+      const s = document.createElement('script');
+      s.src = src; s.async = true;
+      s.onload = ()=> resolve();
+      s.onerror = ()=> { s.remove(); reject(new Error('No se pudo descargar ' + src)); };
+      document.head.appendChild(s);
+    });
+  }
+  async function loadScriptWithFallbacks(urls, isLoaded){
+    if(isLoaded()) return true;
+    for(const u of urls){
+      try{ await loadScriptOnce(u); if(isLoaded()) return true; }catch(err){ console.warn('[Gantt]', err.message); }
+    }
+    return isLoaded();
+  }
+
+  async function ensureClient(){
+    if(sb) return true;
+    if(!SUPABASE_READY) return false;
+    const ok = await loadScriptWithFallbacks(SUPABASE_LIB_FALLBACKS, ()=> typeof window.supabase !== 'undefined' && !!window.supabase.createClient);
+    if(!ok) return false;
     try{
-      sb = supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
+      sb = window.supabase.createClient(SUPABASE_CONFIG.url, SUPABASE_CONFIG.key);
+      return true;
     }catch(err){
       console.error('[Gantt] Error inicializando Supabase', err);
-      showBanner('No se pudo inicializar Supabase: ' + (err && err.message ? err.message : err) + '. Revisá que copiaste bien los valores de SUPABASE_CONFIG.');
+      return false;
     }
-  } else {
-    showBanner('Este Gantt todavía no está conectado a una base de datos en vivo (Supabase). Los cambios se pierden al cerrar la pestaña hasta que se configure. Abrí el archivo con un editor de texto y completá el bloque SUPABASE_CONFIG cerca del inicio del script — instrucciones en el chat de Claude donde te lo pasaron.');
+  }
+
+  // ---------- copia local (este navegador) ----------
+  function cacheLocal(){
+    if(!data) return;
+    try{ localStorage.setItem(CACHE_KEY, JSON.stringify({ data, savedAt: new Date().toISOString(), dirty: offlineDirty })); }catch(err){}
+  }
+  function readCache(){
+    try{ const raw = localStorage.getItem(CACHE_KEY); return raw ? JSON.parse(raw) : null; }catch(err){ return null; }
+  }
+
+  // Traduce el error técnico a algo entendible y con la acción concreta para resolverlo.
+  function explainError(err){
+    const raw = err && (err.message || err.code || err.hint || err.details) ? String(err.message || err.code || err.hint || err.details) : String(err || 'error desconocido');
+    const status = err && err._status;
+    if(err && err._libMissing){
+      return 'No se pudo descargar la librería de conexión (Supabase). Revisá tu conexión a internet o si la red de la oficina bloquea cdn.jsdelivr.net / unpkg.com.';
+    }
+    if(status === 540 || /paused|pausad/i.test(raw)){
+      return 'El proyecto de Supabase está PAUSADO (el plan gratuito se pausa solo tras ~1 semana sin uso). Entrá a supabase.com/dashboard → proyecto → "Restore project". En 1-2 minutos el Gantt vuelve a estar online solo.';
+    }
+    if(/fetch|network|load failed|ERR_|timeout|abort/i.test(raw) || status === 0){
+      return 'No se pudo llegar al servidor de Supabase. Causa más común: el proyecto gratuito se pausó por inactividad → entrá a supabase.com/dashboard, abrí el proyecto y tocá "Restore project". Si no, revisá tu conexión a internet.';
+    }
+    if(/does not exist|relation/i.test(raw)){
+      return 'La tabla "gantt_boards" no existe en Supabase (' + raw + '). Hay que volver a correr el SQL que la crea.';
+    }
+    if(/jwt|api ?key|invalid|unauthorized|401/i.test(raw) || status === 401){
+      return 'Supabase rechazó la clave de acceso (' + raw + '). Puede que la key se haya rotado: copiá la "publishable key" nueva de Project Settings → API y pegala en SUPABASE_CONFIG.';
+    }
+    if(/row-level|permission|policy|403/i.test(raw) || status === 403){
+      return 'Supabase no da permiso sobre la tabla (' + raw + '). Revisá las políticas RLS de "gantt_boards".';
+    }
+    return 'Error de Supabase: ' + raw;
+  }
+
+  function scheduleReconnect(){
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(()=>{ if(!remoteReady) load(); }, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, 120000);
   }
 
   function scheduleSave(){
-    if(!SUPABASE_READY || !sb){ setStatus('Sin configurar', 'err'); return; }
+    if(!data) return;
+    if(!remoteReady){
+      // sin conexión: se guarda en este navegador y se sube cuando vuelva la conexión
+      offlineDirty = true;
+      cacheLocal();
+      setStatus(SUPABASE_READY ? 'Sin conexión · guardado local' : 'Sin configurar', 'err');
+      return;
+    }
+    cacheLocal();
     setStatus('Guardando…', 'saving');
     clearTimeout(saveTimer);
     saveTimer = setTimeout(()=>{ saveAttempts = 0; save(); }, 400);
@@ -3758,15 +4176,23 @@
   }
 
   async function save(){
-    if(!SUPABASE_READY || !sb){ setStatus('Sin configurar', 'err'); return; }
+    if(!remoteReady || !sb){
+      // nunca subir sin haber leído antes la versión de la nube
+      if(data){ offlineDirty = true; cacheLocal(); }
+      setStatus(SUPABASE_READY ? 'Sin conexión · guardado local' : 'Sin configurar', 'err');
+      if(SUPABASE_READY && !loadingNow) load();
+      return;
+    }
     stampCompletedTimestamps();
     try{
-      const { error } = await sb.from('gantt_boards').upsert({
+      const { error, status } = await sb.from('gantt_boards').upsert({
         id: ROW_ID,
         data: data,
         updated_at: new Date().toISOString()
       });
-      if(error) throw error;
+      if(error){ error._status = status; throw error; }
+      offlineDirty = false;
+      cacheLocal();
       setStatus('Guardado en vivo', 'ok');
       hideBanner();
       saveTimer = null;
@@ -3777,50 +4203,106 @@
       console.error('[Gantt] Error guardando', err);
       saveAttempts++;
       saveTimer = null;
-      const detail = (err && (err.message || err.code || err.hint)) ? (err.message || err.code || err.hint) : 'error desconocido';
+      offlineDirty = true;
+      cacheLocal();
       if(saveAttempts < 3){
         setStatus('Reintentando guardado…', 'saving');
         clearTimeout(saveRetryTimer);
         saveRetryTimer = setTimeout(save, 1200 * saveAttempts);
       } else {
-        setStatus('Error al guardar', 'err');
-        showBanner('No se pudo guardar en Supabase (' + detail + '). Si dice algo de "row-level security" o "permission", revisá que hayas desactivado RLS o creado la política de la tabla (paso del instructivo). Si dice "Failed to fetch" o similar, revisá los valores pegados en SUPABASE_CONFIG.');
+        setStatus('Sin conexión · guardado local', 'err');
+        showBanner('⚠️ No se pudo guardar online. Tus cambios quedaron guardados en este navegador y se suben solos cuando vuelva la conexión. ' + explainError(err));
+        // pasamos a modo sin conexión y reintentamos leer/subir más tarde
+        remoteReady = false;
+        scheduleReconnect();
       }
     }
   }
 
-  async function load(){
-    loadAlertState();
-    hideBanner();
-    if(!SUPABASE_READY || !sb){
-      data = seedData();
-      setStatus('Sin configurar', 'err');
-      showBanner('Este Gantt todavía no está conectado a Supabase — completá SUPABASE_CONFIG para que los cambios se guarden y se compartan en vivo.');
-      render();
-      return;
-    }
-    try{
-      const { data: row, error } = await sb.from('gantt_boards').select('data, updated_at').eq('id', ROW_ID).maybeSingle();
-      if(error) throw error;
-      if(row && row.data){
-        data = normalizeData(row.data);
-        syncMetaEl.textContent = row.updated_at ? ('Última sincronización: ' + new Date(row.updated_at).toLocaleString('es-AR')) : '';
+  function useOfflineCopy(reasonMsg){
+    const cache = readCache();
+    if(!data){
+      if(cache && cache.data){
+        data = normalizeData(cache.data);
+        offlineDirty = !!cache.dirty;
       } else {
         data = seedData();
+      }
+    }
+    const when = cache && cache.savedAt ? ' (copia del ' + new Date(cache.savedAt).toLocaleString('es-AR') + ')' : '';
+    const what = (cache && cache.data) ? 'Mostrando la última copia guardada en este navegador' + when + '. Podés seguir trabajando: los cambios se suben solos cuando vuelva la conexión.' : 'Se muestran los datos originales del proyecto (todavía no hay copia guardada en este navegador).';
+    setStatus(SUPABASE_READY ? 'Sin conexión' : 'Sin configurar', 'err');
+    showBanner('⚠️ Gantt sin conexión. ' + reasonMsg + ' ' + what);
+  }
+
+  async function load(){
+    if(loadingNow) return;
+    loadingNow = true;
+    clearTimeout(reconnectTimer);
+    if(!firstLoadDone) loadAlertState();
+    try{
+      if(!SUPABASE_READY){
+        useOfflineCopy('Falta completar SUPABASE_CONFIG en el archivo.');
+        return;
+      }
+      setStatus('Conectando…', 'saving');
+      if(!data){
+        // mientras conecta, mostramos enseguida la última copia de este navegador (o los datos base)
+        const cache0 = readCache();
+        data = (cache0 && cache0.data) ? normalizeData(cache0.data) : seedData();
+        offlineDirty = !!(cache0 && cache0.dirty);
+        render();
+      }
+      const libOk = await ensureClient();
+      if(!libOk){ const e = new Error('lib'); e._libMissing = true; throw e; }
+
+      const { data: row, error, status } = await sb.from('gantt_boards').select('data, updated_at').eq('id', ROW_ID).maybeSingle();
+      if(error){ error._status = status; throw error; }
+
+      const cache = readCache();
+      const hasLocalPending = (offlineDirty || (cache && cache.dirty)) && (data || (cache && cache.data));
+      if(hasLocalPending){
+        const local = data || normalizeData(cache.data);
+        const upload = confirm('Volvió la conexión con el Gantt online.\n\nHiciste cambios mientras estabas sin conexión. ¿Querés SUBIRLOS a la versión online?\n\n• Aceptar = subir mis cambios (reemplaza la versión online)\n• Cancelar = descartar mis cambios y usar la versión online');
+        if(upload){
+          data = local;
+          remoteReady = true;
+          offlineDirty = false;
+          await save();
+        } else {
+          data = (row && row.data) ? normalizeData(row.data) : seedData();
+          offlineDirty = false;
+          remoteReady = true;
+          if(!(row && row.data)) await save();
+        }
+      } else if(row && row.data){
+        data = normalizeData(row.data);
+        remoteReady = true;
+        syncMetaEl.textContent = row.updated_at ? ('Última sincronización: ' + new Date(row.updated_at).toLocaleString('es-AR')) : '';
+      } else {
+        data = (cache && cache.data) ? normalizeData(cache.data) : seedData();
+        remoteReady = true;
         await save();
       }
+      offlineDirty = false;
+      cacheLocal();
+      reconnectDelay = 15000;
+      hideBanner();
       setStatus('Guardado en vivo', 'ok');
+      subscribeRealtime();
+      if(firstLoadDone) showToast('✅ Gantt online de nuevo');
     }catch(err){
       console.error('[Gantt] Error cargando', err);
-      data = seedData();
-      const detail = (err && (err.message || err.code || err.hint)) ? (err.message || err.code || err.hint) : 'error desconocido';
-      setStatus('Sin conexión', 'err');
-      showBanner('No se pudo conectar con Supabase (' + detail + ') — se muestran los datos originales sin guardar. Si dice algo de "relation ... does not exist", falta correr el SQL que crea la tabla (paso del instructivo).');
+      remoteReady = false;
+      useOfflineCopy(explainError(err) + ' Se reintenta automáticamente.');
+      scheduleReconnect();
+    }finally{
+      loadingNow = false;
+      render();
+      if(!firstLoadDone){ firstLoadDone = true; showNoveltiesDigest(); }
     }
-    render();
-    showNoveltiesDigest();
-    subscribeRealtime();
   }
+  window.addEventListener('online', ()=>{ if(!remoteReady){ reconnectDelay = 15000; load(); } });
 
   // ---------- resumen de novedades desde la última visita (por navegador) ----------
   function computeDigestSnapshot(){
@@ -3882,9 +4364,14 @@
       })
       .subscribe((status)=>{
         console.log('[Gantt] Estado de sincronización en vivo:', status);
-        if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT'){
-          setStatus('Se perdió la conexión en vivo', 'err');
-          showBanner('Se cortó la sincronización en vivo con Supabase. Si el problema persiste, revisá que hayas agregado la tabla a la publicación "supabase_realtime" (paso del instructivo).');
+        if(status === 'SUBSCRIBED'){
+          if(remoteReady && !saveTimer) setStatus('Guardado en vivo', 'ok');
+          statusPill.title = '';
+        } else if(status === 'CHANNEL_ERROR' || status === 'TIMED_OUT'){
+          // Los cambios se siguen guardando online; solo se pierde ver en el momento lo que editan otros.
+          // La librería reintenta sola, así que no mostramos un cartel grande.
+          if(remoteReady) setStatus('Guardado · sin sync en vivo', 'saving');
+          statusPill.title = 'Tus cambios se guardan online, pero no se reciben en el momento los cambios de otras personas. Recargá la página para ver lo último. (Si pasa siempre: agregá la tabla gantt_boards a la publicación "supabase_realtime".)';
         }
       });
   }
