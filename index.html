@@ -987,8 +987,8 @@
   //  mensaje del chat donde te pasaron este archivo.
   // =====================================================================
   const SUPABASE_CONFIG = {
-    url: "https://nrnvhunjypoqhljhvpsg.supabase.co",
-    key: "sb_publishable_Ydfe-bgUS8AVZiNmpXZ3VA_r84tnJho"
+    url: "https://ottzfjvefxoogkxuasah.supabase.co",
+    key: "sb_publishable_RbmGe_KthKckDYsk7WK2Lw_jF4R9TsH"
   };
   // Identificador de la fila en la tabla — dejalo así salvo que quieras
   // manejar varios Gantt distintos con la misma base de Supabase.
@@ -3694,14 +3694,16 @@
     'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',
     'https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js'
   ];
+  // mismos colores que las etiquetas de estado de la vista Lista
   const XL_STATUS = {
-    'done':    { label:'Completada',   fill:'E4F6EA', font:'187B43' },
-    'overdue': { label:'Vencida',      fill:'FCE9E9', font:'B22E2E' },
-    'soon':    { label:'Vence pronto', fill:'FFF1DC', font:'B45309' },
-    'active':  { label:'En curso',     fill:'E3EEFB', font:'1E5FA8' },
-    'upcoming':{ label:'Próxima',      fill:'EEF0F4', font:'4B5563' },
-    'no-date': { label:'Sin fecha',    fill:'FFFBEF', font:'8A6D1A' }
+    'done':    { label:'Completada',   bg:'1F9D55', fill:'E4F6EA', font:'187B43' },
+    'overdue': { label:'Vencida',      bg:'DC3D3D', fill:'FCE9E9', font:'B22E2E' },
+    'soon':    { label:'Vence pronto', bg:'E0952E', fill:'FFF1DC', font:'B45309' },
+    'active':  { label:'En curso',     bg:'2E7DD1', fill:'E3EEFB', font:'1E5FA8' },
+    'upcoming':{ label:'Próxima',      bg:'8B93A8', fill:'EEF0F4', font:'4B5563' },
+    'no-date': { label:'Sin fecha',    bg:'B0932E', fill:'FFFBEF', font:'8A6D1A' }
   };
+
   function xlHex(hex){ return 'FF' + String(hex||'#5B5FEF').replace('#','').toUpperCase().slice(0,6); }
   function xlLighten(hex, f){
     const h = String(hex||'#5B5FEF').replace('#','');
@@ -3749,86 +3751,69 @@
     const cols = data.customColumns || [];
     const generated = new Date().toLocaleString('es-AR');
 
-    // ===================== Hoja 1: Lista del proyecto =====================
-    const ws = wb.addWorksheet('Lista del proyecto', {
+    // ===================== Hoja 1: Lista de tareas (mismo estilo que la vista "Lista") =====================
+    const ws = wb.addWorksheet('Lista de tareas', {
       properties:{ tabColor:{ argb:'FF1D6F42' } },
       pageSetup:{ paperSize:9, orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0,
                   margins:{ left:0.4, right:0.4, top:0.5, bottom:0.5, header:0.3, footer:0.3 } },
       headerFooter:{ oddFooter:'&L' + (data.title||'') + '&RPágina &P de &N' }
     });
-    const headers = ['N°','Sección','Tarea / Subtarea','Tipo','Responsable','Prioridad','Inicio','Fin','Días','% Avance','Estado','Notas']
-      .concat(cols.map(c=> c.name));
-    const widths  = [8, 18, 50, 11, 24, 13, 12, 12, 7, 10, 14, 40].concat(cols.map(()=> 18));
+    const FONT = 'Arial';
+    const ROWLINE = { style:'thin', color:{ argb:'FFEDEEF3' } };
+    const headers = ['N°','TAREA','SECCIÓN','RESPONSABLE','PRIORIDAD','INICIO','FIN','%','ESTADO','COMENTARIOS']
+      .concat(cols.map(c=> (c.name||'').toUpperCase()));
+    const widths  = [8, 52, 18, 32, 12, 12, 12, 8, 15, 60].concat(cols.map(()=> 18));
     ws.columns = widths.map(w=> ({ width:w }));
     const lastCol = headers.length;
+    const C = { num:1, name:2, sec:3, who:4, pri:5, ini:6, fin:7, pct:8, st:9, com:10 };
 
-    // Encabezado del documento
-    ws.mergeCells(1,1,1,lastCol);
-    const t1 = ws.getCell(1,1);
-    t1.value = (data.title || 'Proyecto') + ' — Lista del proyecto';
-    t1.font = { name:'Calibri', size:18, bold:true, color:{ argb:'FFFFFFFF' } };
-    t1.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: DARK } };
-    t1.alignment = { vertical:'middle', indent:1 };
-    ws.getRow(1).height = 34;
-
-    ws.mergeCells(2,1,2,lastCol);
-    const t2 = ws.getCell(2,1);
+    // Banda superior, como la barra oscura del Gantt
+    const band = (rowNum, height)=>{ for(let i=1;i<=lastCol;i++){ ws.getCell(rowNum,i).fill = { type:'pattern', pattern:'solid', fgColor:{ argb: DARK } }; } ws.getRow(rowNum).height = height; };
+    band(1, 12); band(2, 30); band(3, 20); band(4, 12);
+    const tl = ws.getCell(2,2);
+    tl.value = (data.title || 'Proyecto');
+    tl.font = { name:FONT, size:18, bold:true, color:{ argb:'FFFFFFFF' } };
+    tl.alignment = { vertical:'middle' };
     const startTxt = data.projectStart ? fmtShort(parseISO(data.projectStart)) + '/' + data.projectStart.slice(0,4) : '—';
-    t2.value = [data.company, data.owner ? 'Responsable: ' + data.owner : '', 'Inicio del proyecto: ' + startTxt].filter(Boolean).join('   ·   ');
-    t2.font = { size:11, color:{ argb:'FFE5E7EB' } };
-    t2.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: DARK } };
-    t2.alignment = { vertical:'middle', indent:1 };
-    ws.getRow(2).height = 20;
+    const sub = ws.getCell(3,2);
+    sub.value = [data.company, data.owner ? 'Responsable: ' + data.owner : '', 'Inicio: ' + startTxt].filter(Boolean).join('   ·   ');
+    sub.font = { name:FONT, size:10, color:{ argb:'FFB8BDCB' } };
+    ws.mergeCells(2, C.st - 1, 2, lastCol);
+    const kp = ws.getCell(2, C.st - 1);
+    kp.value = summary.pct + '% completado (' + summary.done + '/' + summary.total + ')';
+    kp.font = { name:FONT, size:13, bold:true, color:{ argb:'FFFFFFFF' } };
+    kp.alignment = { horizontal:'right', vertical:'middle' };
+    ws.mergeCells(3, C.st - 1, 3, lastCol);
+    const kp2 = ws.getCell(3, C.st - 1);
+    kp2.value = summary.overdue + ' vencidas · ' + summary.noDate + ' sin fecha · generado ' + generated;
+    kp2.font = { name:FONT, size:10, bold:true, color:{ argb:'FFB8BDCB' } };
+    kp2.alignment = { horizontal:'right', vertical:'middle' };
+    ws.getRow(5).height = 10;
 
-    ws.mergeCells(3,1,3,lastCol);
-    const t3 = ws.getCell(3,1);
-    t3.value = 'Avance general: ' + summary.pct + '% (' + summary.done + ' de ' + summary.total + ' completadas)   ·   Vencidas: ' + summary.overdue + '   ·   Sin fecha: ' + summary.noDate + '   ·   Generado: ' + generated;
-    t3.font = { size:10.5, bold:true, color:{ argb: ACCENT } };
-    t3.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFECEBFF' } };
-    t3.alignment = { vertical:'middle', indent:1 };
-    ws.getRow(3).height = 22;
-    ws.getRow(4).height = 8;
-
-    // Encabezados de la tabla
-    const HEAD_ROW = 5;
+    // Encabezados: gris, en mayúsculas, como en la vista Lista
+    const HEAD_ROW = 6;
     const hr = ws.getRow(HEAD_ROW);
     headers.forEach((h,i)=>{
       const c = hr.getCell(i+1);
       c.value = h;
-      c.font = { bold:true, color:{ argb:'FFFFFFFF' }, size:10.5 };
-      c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: ACCENT } };
-      c.alignment = { vertical:'middle', horizontal: i===2||i===11||i===1||i===4 ? 'left' : 'center', wrapText:true, indent: i===2?1:0 };
-      c.border = border;
+      c.font = { name:FONT, bold:true, size:9.5, color:{ argb:'FF8B93A8' } };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FFFFFFFF' } };
+      c.alignment = { vertical:'middle', horizontal: (i+1===C.name||i+1===C.com||i+1===C.who) ? 'left' : 'center' };
+      c.border = { bottom:{ style:'medium', color:{ argb:'FFE2E4EC' } } };
     });
-    hr.height = 26;
+    hr.height = 24;
 
     const toDate = (d)=> d ? new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())) : null;
     const isoToDate = (s)=> s ? parseISO(s) : null;
-
-    function styleDataRow(row, opts){
-      for(let i=1;i<=lastCol;i++){
-        const c = row.getCell(i);
-        c.border = border;
-        c.alignment = Object.assign({ vertical:'middle', wrapText: (i===3||i===12) }, c.alignment || {});
-        if(opts.fill) c.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: opts.fill } };
-        c.font = Object.assign({ size:10.5, color:{ argb: INK } }, opts.font || {});
-      }
-      row.getCell(1).alignment = { vertical:'middle', horizontal:'left' };
-      [4,6,7,8,9,10,11].forEach(i=>{ row.getCell(i).alignment = { vertical:'middle', horizontal:'center' }; });
-      row.getCell(7).numFmt = 'dd/mm/yyyy';
-      row.getCell(8).numFmt = 'dd/mm/yyyy';
-      row.getCell(10).numFmt = '0%';
-    }
-    function paintStatus(cell, status){
-      const st = XL_STATUS[status] || XL_STATUS['no-date'];
-      cell.value = st.label;
-      cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF' + st.fill } };
-      cell.font = { bold:true, size:10, color:{ argb:'FF' + st.font } };
-    }
-    function paintPriority(cell, p){
-      if(!p || p === 'none'){ cell.value = '—'; cell.font = { size:10, color:{ argb:'FFB0B6C0' } }; return; }
-      cell.value = prio(p).label;
-      cell.font = { bold:true, size:10, color:{ argb: xlHex(prio(p).color) } };
+    function commentsText(item){
+      const parts = [];
+      if(item.notes && item.notes.trim()) parts.push('📝 ' + item.notes.trim());
+      (item.comments||[]).forEach(cm=>{
+        const d = cm.at ? new Date(cm.at) : null;
+        const when = d && !isNaN(d) ? d.toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' }) : '';
+        parts.push((when ? when + ' · ' : '') + (cm.author || 'Anónimo') + ': ' + (cm.text || ''));
+      });
+      return parts.join('\n');
     }
     function customVals(item){
       return cols.map(c=>{
@@ -3837,57 +3822,73 @@
         return c.type === 'number' && !isNaN(Number(v)) ? Number(v) : String(v);
       });
     }
+    function writeRow(rowNum, o){
+      const row = ws.getRow(rowNum);
+      row.values = [o.num, o.name, o.section, o.assignee || '—', '', o.start, o.end, o.pct, '', o.comments].concat(o.custom);
+      for(let i=1;i<=lastCol;i++){
+        const c = row.getCell(i);
+        c.border = { bottom: ROWLINE };
+        c.font = { name:FONT, size:10.5, color:{ argb: INK } };
+        c.alignment = { vertical:'middle', horizontal: (i===C.name||i===C.com||i===C.who||i>C.com) ? 'left' : 'center', wrapText: (i===C.name||i===C.com) };
+      }
+      // número + nombre (subtareas con sangría y más suaves, como en la Lista)
+      row.getCell(C.num).font = { name:'Consolas', size:9, color:{ argb: o.isSub ? 'FF6E74E8' : 'FF8B93A8' } };
+      row.getCell(C.num).alignment = { vertical:'middle', horizontal:'left', indent: o.isSub ? 1 : 0 };
+      row.getCell(C.name).alignment = { vertical:'middle', wrapText:true, indent: o.isSub ? 2 : 0 };
+      row.getCell(C.name).font = { name:FONT, size:10.5, color:{ argb: o.isSub ? SOFT : INK } };
+      // sección: etiqueta de color
+      const sc = row.getCell(C.sec);
+      sc.fill = { type:'pattern', pattern:'solid', fgColor:{ argb: xlHex(o.color) } };
+      sc.font = { name:FONT, size:9.5, bold:true, color:{ argb:'FFFFFFFF' } };
+      sc.border = { top:{ style:'thin', color:{ argb:'FFFFFFFF' } }, bottom:{ style:'thin', color:{ argb:'FFFFFFFF' } } };
+      if(!o.assignee) row.getCell(C.who).font = { name:FONT, size:10.5, color:{ argb:'FFB0B6C0' } };
+      // prioridad
+      const pc = row.getCell(C.pri);
+      if(!o.priority || o.priority === 'none'){ pc.value = '—'; pc.font = { name:FONT, size:10.5, color:{ argb:'FFB0B6C0' } }; }
+      else { pc.value = prio(o.priority).label; pc.font = { name:FONT, size:10, bold:true, color:{ argb: xlHex(prio(o.priority).color) } }; }
+      // fechas y %
+      [C.ini, C.fin].forEach(i=>{ const c = row.getCell(i); c.numFmt = 'dd/mm/yyyy'; if(c.value === null || c.value === ''){ c.value = '—'; c.font = { name:FONT, size:10.5, color:{ argb:'FFB0B6C0' } }; } });
+      row.getCell(C.pct).numFmt = '0%';
+      // estado: etiqueta de color
+      const st = XL_STATUS[o.status] || XL_STATUS['no-date'];
+      const ec = row.getCell(C.st);
+      ec.value = st.label;
+      ec.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF' + st.bg } };
+      ec.font = { name:FONT, size:9.5, bold:true, color:{ argb:'FFFFFFFF' } };
+      ec.border = { top:{ style:'thin', color:{ argb:'FFFFFFFF' } }, bottom:{ style:'thin', color:{ argb:'FFFFFFFF' } } };
+      // comentarios
+      row.getCell(C.com).font = { name:FONT, size:9.5, color:{ argb: SOFT } };
+      const lines = o.comments ? o.comments.split('\n').reduce((a,l)=> a + Math.max(1, Math.ceil(l.length / 70)), 0) : 1;
+      const nameLines = Math.max(1, Math.ceil(String(o.name||'').length / 55));
+      row.height = Math.max(22, 14 * Math.max(lines, nameLines) + 8);
+      if(o.isSub) row.outlineLevel = 1;
+    }
 
     let r = HEAD_ROW + 1;
     data.sections.forEach(sec=>{
-      // fila de sección
-      const secRow = ws.getRow(r);
-      const secLeaves = [];
-      sec.tasks.forEach(t=>{ if(t.subtasks && t.subtasks.length) secLeaves.push(...t.subtasks); else secLeaves.push(t); });
-      const dated = sec.tasks.map(taskRangeAndStatus).filter(x=> x.start && x.end);
-      const sMin = dated.length ? dated.map(x=>x.start).reduce((a,b)=> a<b?a:b) : null;
-      const sMax = dated.length ? dated.map(x=>x.end).reduce((a,b)=> a>b?a:b) : null;
-      secRow.values = [nums[sec.id], sec.name, (sec.name||'').toUpperCase(), 'Sección', '', '', toDate(sMin), toDate(sMax),
-        (sMin && sMax) ? diffDays(sMin, sMax) + 1 : '', sectionProgress(sec)/100, secLeaves.length + ' ítems', ''].concat(cols.map(()=>''));
-      styleDataRow(secRow, { fill: xlLighten(sec.color, 0.78), font:{ bold:true, size:11, color:{ argb: INK } } });
-      secRow.getCell(1).border = Object.assign({}, border, { left:{ style:'thick', color:{ argb: xlHex(sec.color) } } });
-      secRow.height = 22;
-      r++;
-
       sec.tasks.forEach(t=>{
         const rr = taskRangeAndStatus(t);
-        const hasSubs = !!(t.subtasks && t.subtasks.length);
-        const row = ws.getRow(r);
-        row.values = [nums[t.id], sec.name, t.name, t.type==='milestone' ? 'Hito' : 'Tarea', t.assignee || '', '', toDate(rr.start), toDate(rr.end),
-          (rr.start && rr.end) ? diffDays(rr.start, rr.end) + 1 : '', (rr.pct||0)/100, '', t.notes || ''].concat(customVals(t));
-        styleDataRow(row, { font:{ bold: hasSubs, size:10.5, color:{ argb: INK } } });
-        row.getCell(3).alignment = { vertical:'middle', wrapText:true, indent:1 };
-        paintPriority(row.getCell(6), t.priority);
-        paintStatus(row.getCell(11), rr.status);
-        r++;
-
+        writeRow(r++, { num:nums[t.id], name:t.name, section:sec.name, color:sec.color, assignee:t.assignee, priority:t.priority,
+          start:toDate(rr.start), end:toDate(rr.end), pct:(rr.pct||0)/100, status:rr.status, comments:commentsText(t), custom:customVals(t), isSub:false });
         (t.subtasks||[]).forEach(s=>{
-          const st = leafStatus(s);
-          const sd = isoToDate(s.start), ed = isoToDate(s.end);
-          const srow = ws.getRow(r);
-          srow.values = [nums[s.id], sec.name, s.name, s.type==='milestone' ? 'Hito' : 'Subtarea', s.assignee || '', '', sd, ed,
-            (sd && ed) ? diffDays(sd, ed) + 1 : '', (s.completed ? 100 : (s.progress||0))/100, '', s.notes || ''].concat(customVals(s));
-          styleDataRow(srow, { fill:'FFFAFAFC', font:{ size:10, color:{ argb: SOFT } } });
-          srow.getCell(3).alignment = { vertical:'middle', wrapText:true, indent:3 };
-          srow.getCell(3).font = { size:10, color:{ argb: INK } };
-          srow.getCell(1).font = { size:9.5, color:{ argb:'FF8B93A8' } };
-          paintPriority(srow.getCell(6), s.priority);
-          paintStatus(srow.getCell(11), st);
-          srow.outlineLevel = 1;
-          r++;
+          writeRow(r++, { num:nums[s.id], name:s.name, section:sec.name, color:sec.color, assignee:s.assignee, priority:s.priority,
+            start:isoToDate(s.start), end:isoToDate(s.end), pct:(s.completed ? 100 : (s.progress||0))/100, status:leafStatus(s),
+            comments:commentsText(s), custom:customVals(s), isSub:true });
         });
       });
     });
 
-    ws.views = [{ state:'frozen', xSplit:3, ySplit:HEAD_ROW, topLeftCell:'D6', activeCell:'A6', showGridLines:false }];
+    ws.views = [{ state:'frozen', xSplit:2, ySplit:HEAD_ROW, topLeftCell:'C7', activeCell:'A7', showGridLines:false }];
     ws.autoFilter = { from:{ row:HEAD_ROW, column:1 }, to:{ row:Math.max(HEAD_ROW, r-1), column:lastCol } };
     ws.pageSetup.printTitlesRow = HEAD_ROW + ':' + HEAD_ROW;
     ws.properties.outlineProperties = { summaryBelow:false };
+
+    function paintStatus(cell, status){
+      const st = XL_STATUS[status] || XL_STATUS['no-date'];
+      cell.value = st.label;
+      cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb:'FF' + st.bg } };
+      cell.font = { bold:true, size:10, color:{ argb:'FFFFFFFF' } };
+    }
 
     // ===================== Hoja 2: Resumen =====================
     const rs = wb.addWorksheet('Resumen', {
